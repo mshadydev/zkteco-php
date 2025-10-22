@@ -1,0 +1,63 @@
+# Composer
+/vendor/
+/composer.lock
+
+# IDE and Editor files
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.log
+/logs/
+/tmp/
+*.tmp
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Export directory (generated files)
+/export/*
+!/export/.gitkeep
+
+# Test coverage and reports
+/coverage/
+/build/
+/reports/
+
+# PHPUnit
+/.phpunit.result.cache
+/phpunit.xml
+
+# Testing files
+/tests/temp/
+
+# Generated documentation
+/docs/build/
+
+# Backup files
+*.backup
+*.bak
+*.orig
+
+# Cache directories
+/.cache/
+/cache/
+
+# Local development files
+local_*
+dev_*
+test_*

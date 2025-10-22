@@ -1,0 +1,55 @@
+{
+    "name": "mshadydev/zkteco-php",
+    "description": "A comprehensive PHP library for connecting to and extracting data from ZKTeco fingerprint attendance devices. Supports user management, attendance records extraction, and device information retrieval.",
+    "type": "library",
+    "keywords": [
+        "zkteco",
+        "attendance",
+        "biometric",
+        "fingerprint",
+        "time-attendance",
+        "zklib",
+        "php"
+    ],
+    "homepage": "https://github.com/mshadydev/zkteco-php",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Mohamed Shady",
+            "email": "support@itechnologyeg.com",
+            "homepage": "https://itechnologyeg.com",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/mshadydev/zkteco-php/issues",
+        "source": "https://github.com/mshadydev/zkteco-php"
+    },
+    "require": {
+        "php": ">=7.0",
+        "ext-sockets": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0|^10.0",
+        "phpstan/phpstan": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "MshadyDev\\ZKTeco\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "MshadyDev\\ZKTeco\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse src --level=5"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

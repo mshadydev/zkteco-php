@@ -1,0 +1,6 @@
+uid,user_id,name,privilege,password,group_id,card
+1,1001,"John Doe",14,"",1,12345678
+2,1002,"Jane Smith",14,"",1,0
+3,1003,"Mike Johnson",0,"",1,87654321
+4,1004,"Sarah Wilson",0,"",1,0
+5,1005,"David Brown",14,"",2,11223344
