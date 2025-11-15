@@ -476,6 +476,37 @@ class ZKTeco {
     }
     
     /**
+     * Set device time
+     */
+    public function setTime($datetime = null) {
+        if ($datetime === null) {
+            $datetime = new DateTime();
+        } elseif (is_string($datetime)) {
+            $datetime = new DateTime($datetime);
+        }
+        
+        $time_data = $this->encodeTime($datetime);
+        $command_string = pack('V', $time_data);
+        
+        $response = $this->sendCommand(self::CMD_SET_TIME, $command_string, 1024);
+        if ($response['status']) {
+            return true;
+        }
+        throw new Exception("Cannot set device time");
+    }
+    
+    /**
+     * Clear attendance records from device
+     */
+    public function clearAttendance() {
+        $response = $this->sendCommand(self::CMD_CLEAR_ATTLOG, '', 1024);
+        if ($response['status']) {
+            return true;
+        }
+        throw new Exception("Cannot clear attendance records");
+    }
+    
+    /**
      * Get device configuration option
      */
     public function getOption($option) {
@@ -544,6 +575,28 @@ class ZKTeco {
         $year = $time_data + 2000;
         
         return new DateTime(sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $month, $day, $hour, $minute, $second));
+    }
+    
+    /**
+     * Encode DateTime to ZKTeco time format (reverse of decodeTime)
+     */
+    private function encodeTime($datetime) {
+        $year = (int)$datetime->format('Y');
+        $month = (int)$datetime->format('m');
+        $day = (int)$datetime->format('d');
+        $hour = (int)$datetime->format('H');
+        $minute = (int)$datetime->format('i');
+        $second = (int)$datetime->format('s');
+        
+        // Reverse the decoding process
+        $time_data = $year - 2000;
+        $time_data = ($time_data * 12) + ($month - 1);
+        $time_data = ($time_data * 31) + ($day - 1);
+        $time_data = ($time_data * 24) + $hour;
+        $time_data = ($time_data * 60) + $minute;
+        $time_data = ($time_data * 60) + $second;
+        
+        return $time_data;
     }
     
     /**
@@ -929,9 +982,21 @@ class ZKTeco {
         
         if ($size < 4) {
             if ($this->verbose) {
-                echo "No attendance data\n";
+                echo "CMD_ATTLOG_RRQ returned no data, trying CMD_DB_RRQ fallback with buffer 1...\n";
             }
-            return [];
+            // Try alternative command with buffer ID 1 for attendance logs
+            list($attendanceData, $size) = $this->readWithBuffer(self::CMD_DB_RRQ, 1);
+            
+            if ($this->verbose) {
+                echo "CMD_DB_RRQ attendance data size: $size bytes\n";
+            }
+            
+            if ($size < 4) {
+                if ($this->verbose) {
+                    echo "No attendance data\n";
+                }
+                return [];
+            }
         }
         
         // Get total size from first 4 bytes
@@ -1073,9 +1138,21 @@ class ZKTeco {
         
         if ($size < 4) {
             if ($this->verbose) {
-                echo "No attendance data\n";
+                echo "CMD_ATTLOG_RRQ returned no data, trying CMD_DB_RRQ fallback with buffer 1...\n";
             }
-            return [];
+            // Try alternative command with buffer ID 1 for attendance logs
+            list($attendanceData, $size) = $this->readWithBuffer(self::CMD_DB_RRQ, 1);
+            
+            if ($this->verbose) {
+                echo "CMD_DB_RRQ attendance data size: $size bytes\n";
+            }
+            
+            if ($size < 4) {
+                if ($this->verbose) {
+                    echo "No attendance data\n";
+                }
+                return [];
+            }
         }
         
         // Get total size from first 4 bytes
