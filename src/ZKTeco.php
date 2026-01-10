@@ -6,128 +6,123 @@ use Exception;
 use DateTime;
 
 /**
- * ZKTeco PHP Library
+ * ZKTeco PHP Library - Port of Python pyzk library
  * 
- * A comprehensive PHP library for connecting to and extracting data from ZKTeco fingerprint 
- * attendance devices. This library provides complete functionality for user management, 
- * attendance records extraction, and device information retrieval.
- * 
- * Based on comprehensive analysis of the pyzk Python library protocol and successfully 
- * tested with real ZKTeco devices.
+ * This is a faithful PHP port of the fananimi/pyzk Python library
  * 
  * @author Mohamed Shady <support@itechnologyeg.com>
- * @copyright 2025 Mohamed Shady (iTechnology)
- * @license MIT
- * @version 1.0.0
- * @link https://github.com/mshadydev/zkteco-php
+ * @version 2.0.0
  */
 class ZKTeco {
-    // Protocol Constants (from pyzk const.py)
-    const CMD_CONNECT       = 1000;
-    const CMD_EXIT          = 1001;
-    const CMD_ENABLEDEVICE  = 1002;
-    const CMD_DISABLEDEVICE = 1003;
-    const CMD_RESTART       = 1004;
-    const CMD_POWEROFF      = 1005;
-    const CMD_AUTH          = 1102;
-    const CMD_GET_VERSION   = 1100;
-    const CMD_GET_TIME      = 201;
-    const CMD_SET_TIME      = 202;
+    // Protocol Constants - matching pyzk const.py
+    const USHRT_MAX = 65535;
     
-    // Data Commands
-    const CMD_DB_RRQ        = 7;      // Read data from machine
-    const CMD_USER_WRQ      = 8;      // Upload user information
-    const CMD_USERTEMP_RRQ  = 9;      // Read user templates/data (Python equivalent)
-    const CMD_ATTLOG_RRQ    = 13;     // Read attendance records
-    const CMD_CLEAR_DATA    = 14;     // Clear data
-    const CMD_CLEAR_ATTLOG  = 15;     // Clear attendance records
-    const CMD_OPTIONS_RRQ   = 11;     // Read configuration parameter
-    const CMD_GET_FREE_SIZES= 50;     // Get machine status
+    const CMD_DB_RRQ          = 7;
+    const CMD_USER_WRQ        = 8;
+    const CMD_USERTEMP_RRQ    = 9;
+    const CMD_USERTEMP_WRQ    = 10;
+    const CMD_OPTIONS_RRQ     = 11;
+    const CMD_OPTIONS_WRQ     = 12;
+    const CMD_ATTLOG_RRQ      = 13;
+    const CMD_CLEAR_DATA      = 14;
+    const CMD_CLEAR_ATTLOG    = 15;
+    const CMD_DELETE_USER     = 18;
+    const CMD_DELETE_USERTEMP = 19;
+    const CMD_CLEAR_ADMIN     = 20;
     
-    // Response Codes
-    const CMD_ACK_OK        = 2000;
-    const CMD_ACK_ERROR     = 2001;
-    const CMD_ACK_DATA      = 2002;
-    const CMD_ACK_RETRY     = 2003;
-    const CMD_ACK_REPEAT    = 2004;
-    const CMD_ACK_UNAUTH    = 2005;
+    const CMD_GET_FREE_SIZES  = 50;
+    const CMD_ENABLE_CLOCK    = 57;
+    const CMD_STARTVERIFY     = 60;
+    const CMD_STARTENROLL     = 61;
+    const CMD_CANCELCAPTURE   = 62;
+    const CMD_STATE_RRQ       = 64;
     
-    // Data preparation
-    const CMD_PREPARE_DATA  = 1500;
-    const CMD_DATA          = 1501;
-    const CMD_FREE_DATA     = 1502;
+    const CMD_GET_TIME        = 201;
+    const CMD_SET_TIME        = 202;
+    const CMD_REG_EVENT       = 500;
     
-    // TCP Constants
-    const MACHINE_PREPARE_DATA_1 = 20560; // 0x5050
-    const MACHINE_PREPARE_DATA_2 = 32130; // 0x7282
+    const CMD_CONNECT         = 1000;
+    const CMD_EXIT            = 1001;
+    const CMD_ENABLEDEVICE    = 1002;
+    const CMD_DISABLEDEVICE   = 1003;
+    const CMD_RESTART         = 1004;
+    const CMD_POWEROFF        = 1005;
     
-    const USHRT_MAX         = 65535;
+    const CMD_GET_VERSION     = 1100;
+    const CMD_CHANGE_SPEED    = 1101;
+    const CMD_AUTH            = 1102;
     
-    // Connection properties
+    const CMD_PREPARE_DATA    = 1500;
+    const CMD_DATA            = 1501;
+    const CMD_FREE_DATA       = 1502;
+    const CMD_PREPARE_BUFFER  = 1503;  // (UNDOCUMENTED) initialize buffer for partial reads
+    const CMD_READ_BUFFER     = 1504;  // (UNDOCUMENTED) read a partial chunk from buffer
+    
+    const CMD_ACK_OK          = 2000;
+    const CMD_ACK_ERROR       = 2001;
+    const CMD_ACK_DATA        = 2002;
+    const CMD_ACK_RETRY       = 2003;
+    const CMD_ACK_REPEAT      = 2004;
+    const CMD_ACK_UNAUTH      = 2005;
+    
+    const FCT_ATTLOG          = 1;
+    const FCT_WORKCODE        = 8;
+    const FCT_FINGERTMP       = 2;
+    const FCT_OPLOG           = 4;
+    const FCT_USER            = 5;
+    const FCT_SMS             = 6;
+    const FCT_UDATA           = 7;
+    
+    const MACHINE_PREPARE_DATA_1 = 20560;  // 0x5050
+    const MACHINE_PREPARE_DATA_2 = 32130;  // 0x7d82
+
+    // Instance variables
     private $ip;
     private $port;
     private $timeout;
     private $password;
     private $force_udp;
-    private $omit_ping;
     private $verbose;
     private $encoding;
     
-    // Socket and session
     private $socket;
     private $is_connect = false;
-    private $is_enabled = true;
     private $session_id = 0;
     private $reply_id;
-    private $data_recv = null;
-    private $data = null;
     private $tcp = true;
     
-    // Device capabilities
-    private $users = 0;
-    private $records = 0;
-    private $user_packet_size = 28; // default for ZK6
+    // Response data
+    private $data_recv;
+    private $tcp_data_recv;
+    private $tcp_length;
+    private $header;
+    private $data;
+    private $response;
     
-    /**
-     * Constructor
-     */
-    public function __construct($ip, $port = 4370, $timeout = 60, $password = 0, $force_udp = false, $omit_ping = false, $verbose = false, $encoding = 'UTF-8') {
+    // Device info
+    public $users = 0;
+    public $fingers = 0;
+    public $records = 0;
+    public $cards = 0;
+    public $users_cap = 0;
+    public $fingers_cap = 0;
+    public $rec_cap = 0;
+    public $faces = 0;
+    public $faces_cap = 0;
+    public $user_packet_size = 72;
+    public $next_uid = 1;
+    public $next_user_id = '1';
+    
+    public function __construct($ip, $port = 4370, $timeout = 60, $password = 0, $force_udp = false, $verbose = false, $encoding = 'UTF-8') {
         $this->ip = $ip;
         $this->port = $port;
         $this->timeout = $timeout;
         $this->password = $password;
         $this->force_udp = $force_udp;
-        $this->omit_ping = $omit_ping;
         $this->verbose = $verbose;
         $this->encoding = $encoding;
         $this->reply_id = self::USHRT_MAX - 1;
         $this->tcp = !$force_udp;
-    }
-    
-    /**
-     * Test ping connectivity
-     */
-    private function testPing() {
-        if (PHP_OS_FAMILY === 'Windows') {
-            $cmd = "ping -n 1 -w 5000 {$this->ip}";
-        } else {
-            $cmd = "ping -c 1 -W 5 {$this->ip}";
-        }
-        
-        exec($cmd, $output, $return_code);
-        return $return_code === 0;
-    }
-    
-    /**
-     * Test TCP connectivity
-     */
-    private function testTcp() {
-        $connection = @fsockopen($this->ip, $this->port, $errno, $errstr, 10);
-        if ($connection) {
-            fclose($connection);
-            return true;
-        }
-        return false;
     }
     
     /**
@@ -136,11 +131,19 @@ class ZKTeco {
     private function createSocket() {
         if ($this->tcp) {
             $this->socket = socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+            if ($this->socket === false) {
+                throw new Exception("Failed to create socket: " . socket_strerror(socket_last_error()));
+            }
+            
+            // Set socket options
             socket_set_option($this->socket, SOL_SOCKET, SO_RCVTIMEO, ['sec' => $this->timeout, 'usec' => 0]);
             socket_set_option($this->socket, SOL_SOCKET, SO_SNDTIMEO, ['sec' => $this->timeout, 'usec' => 0]);
-            $result = socket_connect($this->socket, $this->ip, $this->port);
-            if (!$result) {
-                throw new Exception("TCP connection failed: " . socket_strerror(socket_last_error()));
+            socket_set_option($this->socket, SOL_SOCKET, SO_RCVBUF, 1048576);  // 1MB buffer
+            socket_set_option($this->socket, SOL_SOCKET, SO_SNDBUF, 1048576);
+            
+            $result = @socket_connect($this->socket, $this->ip, $this->port);
+            if ($result === false) {
+                throw new Exception("TCP connection failed: " . socket_strerror(socket_last_error($this->socket)));
             }
         } else {
             $this->socket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
@@ -149,23 +152,73 @@ class ZKTeco {
     }
     
     /**
-     * Create packet checksum
+     * Create TCP top header - matches pyzk __create_tcp_top
      */
-    private function createChecksum($packet) {
-        $checksum = 0;
+    private function createTcpTop($packet) {
         $length = strlen($packet);
+        return pack('vvV', self::MACHINE_PREPARE_DATA_1, self::MACHINE_PREPARE_DATA_2, $length) . $packet;
+    }
+    
+    /**
+     * Test TCP top header - matches pyzk __test_tcp_top
+     * Returns size if valid, 0 otherwise
+     */
+    private function testTcpTop($packet) {
+        if ($packet === null || strlen($packet) <= 8) {
+            return 0;
+        }
+        $tcp_header = unpack('v2machine/Vsize', $packet);
+        if ($tcp_header['machine1'] == self::MACHINE_PREPARE_DATA_1 && 
+            $tcp_header['machine2'] == self::MACHINE_PREPARE_DATA_2) {
+            return $tcp_header['size'];
+        }
+        return 0;
+    }
+    
+    /**
+     * Create packet header - matches pyzk __create_header exactly
+     */
+    private function createHeader($command, $command_string, $session_id, $reply_id) {
+        // First, create the buffer with checksum = 0 for checksum calculation
+        $buf = pack('v4', $command, 0, $session_id, $reply_id) . $command_string;
         
-        // Process pairs of bytes
-        for ($i = 0; $i < $length - 1; $i += 2) {
-            $checksum += ord($packet[$i]) + (ord($packet[$i + 1]) << 8);
+        // Convert to array of bytes for checksum calculation
+        $bytes = array_values(unpack('C*', $buf));
+        
+        // Calculate checksum
+        $checksum_bytes = $this->createChecksum($bytes);
+        $checksum = unpack('v', $checksum_bytes)[1];
+        
+        // Increment reply_id for the actual packet
+        $reply_id++;
+        if ($reply_id >= self::USHRT_MAX) {
+            $reply_id -= self::USHRT_MAX;
+        }
+        
+        // Create final packet with proper checksum
+        return pack('v4', $command, $checksum, $session_id, $reply_id) . $command_string;
+    }
+    
+    /**
+     * Create checksum - matches pyzk __create_checksum exactly
+     */
+    private function createChecksum($p) {
+        $l = count($p);
+        $checksum = 0;
+        
+        $i = 0;
+        while ($l > 1) {
+            // Pack two bytes and unpack as unsigned short
+            $checksum += unpack('v', pack('C2', $p[$i], $p[$i + 1]))[1];
+            $i += 2;
             if ($checksum > self::USHRT_MAX) {
                 $checksum -= self::USHRT_MAX;
             }
+            $l -= 2;
         }
         
-        // Handle odd byte
-        if ($length % 2) {
-            $checksum += ord($packet[$length - 1]);
+        if ($l) {
+            $checksum += $p[$i];
         }
         
         while ($checksum > self::USHRT_MAX) {
@@ -182,63 +235,11 @@ class ZKTeco {
     }
     
     /**
-     * Create packet header
+     * Send command to device - matches pyzk __send_command
      */
-    private function createHeader($command, $command_string = '', $session_id = null, $reply_id = null) {
-        if ($session_id === null) $session_id = $this->session_id;
-        if ($reply_id === null) $reply_id = $this->reply_id;
-        
-        // Create initial buffer
-        $buf = pack('vvvv', $command, 0, $session_id, $reply_id) . $command_string;
-        
-        // Calculate checksum
-        $checksum_data = '';
-        for ($i = 0; $i < strlen($buf); $i++) {
-            $checksum_data .= chr(ord($buf[$i]));
-        }
-        
-        $checksum_bytes = $this->createChecksum($checksum_data);
-        $checksum = unpack('v', $checksum_bytes)[1];
-        
-        // Increment reply_id
-        $this->reply_id++;
-        if ($this->reply_id >= self::USHRT_MAX) {
-            $this->reply_id -= self::USHRT_MAX;
-        }
-        
-        // Create final header
-        $header = pack('vvvv', $command, $checksum, $session_id, $this->reply_id);
-        
-        return $header . $command_string;
-    }
-    
-    /**
-     * Create TCP top header
-     */
-    private function createTcpTop($packet) {
-        $length = strlen($packet);
-        return pack('vvV', self::MACHINE_PREPARE_DATA_1, self::MACHINE_PREPARE_DATA_2, $length) . $packet;
-    }
-    
-    /**
-     * Test TCP top header
-     */
-    private function testTcpTop($packet) {
-        if (strlen($packet) <= 8) return 0;
-        
-        $header = unpack('vv1/vv2/VV', substr($packet, 0, 8));
-        if ($header['v1'] == self::MACHINE_PREPARE_DATA_1 && $header['v2'] == self::MACHINE_PREPARE_DATA_2) {
-            return $header['V'];
-        }
-        return 0;
-    }
-    
-    /**
-     * Send command to device
-     */
-    private function sendCommand($command, $command_string = '', $response_size = 1024) {
+    private function sendCommand($command, $command_string = '', $response_size = 8) {
         if (!in_array($command, [self::CMD_CONNECT, self::CMD_AUTH]) && !$this->is_connect) {
-            throw new Exception("Device is not connected");
+            throw new Exception("Not connected to device");
         }
         
         $buf = $this->createHeader($command, $command_string, $this->session_id, $this->reply_id);
@@ -246,1467 +247,1097 @@ class ZKTeco {
         try {
             if ($this->tcp) {
                 $top = $this->createTcpTop($buf);
-                socket_write($this->socket, $top, strlen($top));
+                $sent = socket_send($this->socket, $top, strlen($top), 0);
                 
-                $this->data_recv = socket_read($this->socket, $response_size + 8);
-                if ($this->data_recv === false) {
-                    throw new Exception("Failed to receive TCP data: " . socket_strerror(socket_last_error()));
+                if ($this->verbose) {
+                    echo "Sent $sent bytes for cmd $command\n";
+                    echo "Packet sent: " . bin2hex($top) . "\n";
                 }
                 
-                $tcp_length = $this->testTcpTop($this->data_recv);
-                if ($tcp_length == 0) {
-                    throw new Exception("Invalid TCP packet received");
+                // Receive response - use plain recv without MSG_WAITALL like Python does
+                $this->tcp_data_recv = '';
+                $recv_size = $response_size + 8;  // TCP header + response
+                $bytes = @socket_recv($this->socket, $this->tcp_data_recv, $recv_size, 0);
+                
+                if ($bytes === false) {
+                    $error = socket_strerror(socket_last_error($this->socket));
+                    throw new Exception("Socket recv failed: $error");
                 }
                 
-                $header_data = substr($this->data_recv, 8, 8);
-                $this->data_recv = substr($this->data_recv, 8);
+                if ($this->verbose) {
+                    echo "Received $bytes bytes\n";
+                    if ($this->tcp_data_recv) {
+                        echo "Recv hex: " . bin2hex($this->tcp_data_recv) . "\n";
+                    }
+                }
+                
+                $this->tcp_length = $this->testTcpTop($this->tcp_data_recv);
+                if ($this->tcp_length == 0) {
+                    throw new Exception("TCP packet invalid (received $bytes bytes, expected TCP header 5050xx7d)");
+                }
+                
+                // Skip TCP header (8 bytes) to get to packet data
+                $this->header = unpack('v4', substr($this->tcp_data_recv, 8, 8));
+                $this->data_recv = substr($this->tcp_data_recv, 8);
             } else {
                 socket_sendto($this->socket, $buf, strlen($buf), 0, $this->ip, $this->port);
-                $this->data_recv = socket_read($this->socket, $response_size);
-                
-                if ($this->data_recv === false) {
-                    throw new Exception("Failed to receive UDP data: " . socket_strerror(socket_last_error()));
-                }
-                
-                $header_data = substr($this->data_recv, 0, 8);
+                $this->data_recv = '';
+                socket_recv($this->socket, $this->data_recv, $response_size, 0);
+                $this->header = unpack('v4', substr($this->data_recv, 0, 8));
             }
-            
-            // Parse header
-            $header = unpack('v4', $header_data);
-            $response_code = $header[1];
-            $this->reply_id = $header[4];
-            $this->data = substr($this->data_recv, 8);
-            
-            if ($this->verbose) {
-                echo "Command: $command, Response: $response_code\n";
-            }
-            
-            if (in_array($response_code, [self::CMD_ACK_OK, self::CMD_PREPARE_DATA, self::CMD_DATA])) {
-                return ['status' => true, 'code' => $response_code];
-            }
-            
-            return ['status' => false, 'code' => $response_code];
-            
         } catch (Exception $e) {
             throw new Exception("Network error: " . $e->getMessage());
         }
-    }
-    
-    /**
-     * Create communication key for authentication
-     */
-    private function makeCommKey($key, $session_id, $ticks = 50) {
-        $key = intval($key);
-        $session_id = intval($session_id);
         
-        $k = 0;
-        for ($i = 0; $i < 32; $i++) {
-            if ($key & (1 << $i)) {
-                $k = ($k << 1) | 1;
-            } else {
-                $k = $k << 1;
-            }
-        }
-        
-        $k += $session_id;
-        $k = pack('V', $k);
-        $k = unpack('C4', $k);
-        
-        $k = pack('C4',
-            $k[1] ^ ord('Z'),
-            $k[2] ^ ord('K'),
-            $k[3] ^ ord('S'),
-            $k[4] ^ ord('O')
-        );
-        
-        $k = unpack('v2', $k);
-        $k = pack('vv', $k[2], $k[1]);
-        
-        $B = 0xFF & $ticks;
-        $k = unpack('C4', $k);
-        
-        $result = pack('C4',
-            $k[1] ^ $B,
-            $k[2] ^ $B,
-            $B,
-            $k[4] ^ $B
-        );
-        
-        return $result;
-    }
-    
-    /**
-     * Connect to the device
-     */
-    public function connect() {
-        $this->is_connect = false;
-        
-        // Test connectivity
-        if (!$this->omit_ping && !$this->testPing()) {
-            throw new Exception("Cannot reach device (ping failed): " . $this->ip);
-        }
-        
-        if (!$this->force_udp && $this->testTcp()) {
-            $this->user_packet_size = 72; // ZK8 default
-        }
-        
-        $this->createSocket();
-        $this->session_id = 0;
-        $this->reply_id = self::USHRT_MAX - 1;
-        
-        // Send connect command
-        $response = $this->sendCommand(self::CMD_CONNECT);
-        
-        // Extract session ID from response header regardless of auth status
-        $header = unpack('v4', substr($this->data_recv, 0, 8));
-        $this->session_id = $header[3];
+        $this->response = $this->header[1];
+        $this->reply_id = $this->header[4];
+        $this->data = substr($this->data_recv, 8);
         
         if ($this->verbose) {
-            echo "Response code: {$response['code']}, Session ID: {$this->session_id}\n";
+            echo "Command: $command, Response: {$this->response}\n";
         }
         
-        // Check if authentication is required
-        if ($response['code'] == self::CMD_ACK_UNAUTH) {
-            if ($this->verbose) {
-                echo "Authentication required...\n";
-                echo "Session ID: {$this->session_id}, Password: {$this->password}\n";
-            }
-            
-            $auth_key = $this->makeCommKey($this->password, $this->session_id);
-            
-            if ($this->verbose) {
-                echo "Auth key generated, sending CMD_AUTH...\n";
-            }
-            
-            $auth_response = $this->sendCommand(self::CMD_AUTH, $auth_key);
-            
-            if ($this->verbose) {
-                echo "Auth response code: {$auth_response['code']}\n";
-            }
-            
-            if (!$auth_response['status']) {
-                throw new Exception("Authentication failed - Response code: " . $auth_response['code']);
-            }
-            
-            if ($this->verbose) {
-                echo "✅ Authentication successful!\n";
-            }
+        if (in_array($this->response, [self::CMD_ACK_OK, self::CMD_PREPARE_DATA, self::CMD_DATA])) {
+            return ['status' => true, 'code' => $this->response];
         }
         
-        if ($response['status'] || ($response['code'] == self::CMD_ACK_UNAUTH && isset($auth_response) && $auth_response['status'])) {
-            $this->is_connect = true;
-            return true;
+        return ['status' => false, 'code' => $this->response];
+    }
+    
+    /**
+     * Send ACK OK response - matches pyzk __ack_ok
+     */
+    private function ackOk() {
+        $buf = $this->createHeader(self::CMD_ACK_OK, '', $this->session_id, self::USHRT_MAX - 1);
+        
+        if ($this->tcp) {
+            $top = $this->createTcpTop($buf);
+            socket_send($this->socket, $top, strlen($top), 0);
         } else {
-            if ($response['code'] == self::CMD_ACK_UNAUTH) {
-                throw new Exception("Authentication failed - Invalid password");
-            }
-            throw new Exception("Connection failed - Response code: " . $response['code']);
+            socket_sendto($this->socket, $buf, strlen($buf), 0, $this->ip, $this->port);
         }
     }
     
     /**
-     * Disconnect from device
+     * Get data size from CMD_PREPARE_DATA response - matches pyzk __get_data_size
      */
-    public function disconnect() {
-        if (!$this->is_connect) return true;
-        
-        try {
-            $response = $this->sendCommand(self::CMD_EXIT);
-            $this->is_connect = false;
-            
-            if ($this->socket) {
-                socket_close($this->socket);
-            }
-            
-            return $response['status'];
-        } catch (Exception $e) {
-            if ($this->verbose) {
-                echo "Disconnect error: " . $e->getMessage() . "\n";
-            }
-            return false;
+    private function getDataSize() {
+        if ($this->response == self::CMD_PREPARE_DATA) {
+            return unpack('V', substr($this->data, 0, 4))[1];
         }
+        return 0;
     }
     
     /**
-     * Enable device (unlock for user interaction)
+     * Decode time from 4-byte timestamp - matches pyzk __decode_time exactly
      */
-    public function enableDevice() {
-        $response = $this->sendCommand(self::CMD_ENABLEDEVICE);
-        if ($response['status']) {
-            $this->is_enabled = true;
-            return true;
-        }
-        throw new Exception("Cannot enable device");
-    }
-    
-    /**
-     * Disable device (lock for maintenance)
-     */
-    public function disableDevice() {
-        $response = $this->sendCommand(self::CMD_DISABLEDEVICE);
-        if ($response['status']) {
-            $this->is_enabled = false;
-            return true;
-        }
-        throw new Exception("Cannot disable device");
-    }
-    
-    /**
-     * Get firmware version
-     */
-    public function getFirmwareVersion() {
-        $response = $this->sendCommand(self::CMD_GET_VERSION, '', 1024);
-        if ($response['status']) {
-            $version = explode("\x00", $this->data)[0];
-            return $version;
-        }
-        throw new Exception("Cannot read firmware version");
-    }
-    
-    /**
-     * Get device time
-     */
-    public function getTime() {
-        $response = $this->sendCommand(self::CMD_GET_TIME, '', 1024);
-        if ($response['status']) {
-            $time_data = unpack('V', substr($this->data, 0, 4))[1];
-            return $this->decodeTime($time_data);
-        }
-        throw new Exception("Cannot read device time");
-    }
-    
-    /**
-     * Set device time
-     */
-    public function setTime($datetime = null) {
-        if ($datetime === null) {
-            $datetime = new DateTime();
-        } elseif (is_string($datetime)) {
-            $datetime = new DateTime($datetime);
+    private function decodeTime($t) {
+        // Handle binary string input
+        if (is_string($t) && strlen($t) >= 4) {
+            $t = unpack('V', substr($t, 0, 4))[1];
         }
         
-        $time_data = $this->encodeTime($datetime);
-        $command_string = pack('V', $time_data);
+        $t = intval($t);
         
-        $response = $this->sendCommand(self::CMD_SET_TIME, $command_string, 1024);
-        if ($response['status']) {
-            return true;
+        $second = $t % 60;
+        $t = intval($t / 60);
+        
+        $minute = $t % 60;
+        $t = intval($t / 60);
+        
+        $hour = $t % 24;
+        $t = intval($t / 24);
+        
+        $day = ($t % 31) + 1;
+        $t = intval($t / 31);
+        
+        $month = ($t % 12) + 1;
+        $t = intval($t / 12);
+        
+        $year = $t + 2000;
+        
+        // Validate date components
+        $month = max(1, min(12, $month));
+        $day = max(1, min(31, $day));
+        
+        // Fix invalid day for month
+        while (!checkdate($month, $day, $year) && $day > 1) {
+            $day--;
         }
-        throw new Exception("Cannot set device time");
-    }
-    
-    /**
-     * Clear attendance records from device
-     */
-    public function clearAttendance() {
-        $response = $this->sendCommand(self::CMD_CLEAR_ATTLOG, '', 1024);
-        if ($response['status']) {
-            return true;
-        }
-        throw new Exception("Cannot clear attendance records");
-    }
-    
-    /**
-     * Get device configuration option
-     */
-    public function getOption($option) {
-        $command_string = "~{$option}\x00";
-        $response = $this->sendCommand(self::CMD_OPTIONS_RRQ, $command_string, 1024);
-        if ($response['status']) {
-            $parts = explode('=', $this->data, 2);
-            if (count($parts) > 1) {
-                return trim(str_replace("\x00", '', $parts[1]));
-            }
-        }
-        throw new Exception("Cannot read option: $option");
-    }
-    
-    /**
-     * Get serial number
-     */
-    public function getSerialNumber() {
-        return $this->getOption('SerialNumber');
-    }
-    
-    /**
-     * Get platform name
-     */
-    public function getPlatform() {
-        return $this->getOption('Platform');
-    }
-    
-    /**
-     * Get device name
-     */
-    public function getDeviceName() {
-        return $this->getOption('DeviceName');
-    }
-    
-    /**
-     * Get MAC address
-     */
-    public function getMac() {
-        return $this->getOption('MAC');
-    }
-    
-    /**
-     * Decode ZKTeco timestamp format
-     */
-    private function decodeTime($time_data) {
-        if (is_string($time_data)) {
-            $time_data = unpack('V', $time_data)[1];
-        }
-        
-        $second = $time_data % 60;
-        $time_data = intval($time_data / 60);
-        
-        $minute = $time_data % 60;
-        $time_data = intval($time_data / 60);
-        
-        $hour = $time_data % 24;
-        $time_data = intval($time_data / 24);
-        
-        $day = $time_data % 31 + 1;
-        $time_data = intval($time_data / 31);
-        
-        $month = $time_data % 12 + 1;
-        $time_data = intval($time_data / 12);
-        
-        $year = $time_data + 2000;
         
         return new DateTime(sprintf('%04d-%02d-%02d %02d:%02d:%02d', $year, $month, $day, $hour, $minute, $second));
     }
     
     /**
-     * Encode DateTime to ZKTeco time format (reverse of decodeTime)
+     * Encode time for device - matches pyzk __encode_time
      */
-    private function encodeTime($datetime) {
-        $year = (int)$datetime->format('Y');
-        $month = (int)$datetime->format('m');
-        $day = (int)$datetime->format('d');
-        $hour = (int)$datetime->format('H');
-        $minute = (int)$datetime->format('i');
-        $second = (int)$datetime->format('s');
+    private function encodeTime($t) {
+        if ($t instanceof DateTime) {
+            $year = (int)$t->format('Y');
+            $month = (int)$t->format('m');
+            $day = (int)$t->format('d');
+            $hour = (int)$t->format('H');
+            $minute = (int)$t->format('i');
+            $second = (int)$t->format('s');
+        } else {
+            $year = (int)date('Y', $t);
+            $month = (int)date('m', $t);
+            $day = (int)date('d', $t);
+            $hour = (int)date('H', $t);
+            $minute = (int)date('i', $t);
+            $second = (int)date('s', $t);
+        }
         
-        // Reverse the decoding process
-        $time_data = $year - 2000;
-        $time_data = ($time_data * 12) + ($month - 1);
-        $time_data = ($time_data * 31) + ($day - 1);
-        $time_data = ($time_data * 24) + $hour;
-        $time_data = ($time_data * 60) + $minute;
-        $time_data = ($time_data * 60) + $second;
-        
-        return $time_data;
+        return ((($year % 100) * 12 * 31 + (($month - 1) * 31) + $day - 1) * (24 * 60 * 60) + ($hour * 60 + $minute) * 60 + $second);
     }
     
     /**
-     * Get device status and capacity information
+     * Make communication key - matches pyzk make_commkey exactly
+     */
+    private function makeCommkey($key, $session_id, $ticks = 50) {
+        $key = intval($key);
+        $session_id = intval($session_id);
+        
+        $k = 0;
+        for ($i = 0; $i < 32; $i++) {
+            if (($key & (1 << $i))) {
+                $k = ($k << 1) | 1;
+            } else {
+                $k = $k << 1;
+            }
+        }
+        $k += $session_id;
+        
+        // Pack as unsigned 32-bit int, unpack as 4 bytes
+        $k = pack('V', $k);
+        $k = array_values(unpack('C4', $k));
+        
+        // XOR with 'ZKSO'
+        $k = pack('C4', 
+            $k[0] ^ ord('Z'),
+            $k[1] ^ ord('K'),
+            $k[2] ^ ord('S'),
+            $k[3] ^ ord('O')
+        );
+        
+        // Swap the two 16-bit halves
+        $k = unpack('v2', $k);
+        $k = pack('v2', $k[2], $k[1]);
+        
+        // XOR with ticks
+        $B = 0xFF & $ticks;
+        $k = array_values(unpack('C4', $k));
+        $k = pack('C4',
+            $k[0] ^ $B,
+            $k[1] ^ $B,
+            $B,
+            $k[3] ^ $B
+        );
+        
+        return $k;
+    }
+    
+    /**
+     * Connect to device - matches pyzk connect
+     */
+    public function connect() {
+        $this->createSocket();
+        $this->session_id = 0;
+        $this->reply_id = self::USHRT_MAX - 1;
+        
+        $cmd_response = $this->sendCommand(self::CMD_CONNECT);
+        $this->session_id = $this->header[3];
+        
+        if ($cmd_response['code'] == self::CMD_ACK_UNAUTH) {
+            if ($this->verbose) {
+                echo "Authentication required...\n";
+            }
+            $command_string = $this->makeCommkey($this->password, $this->session_id);
+            $cmd_response = $this->sendCommand(self::CMD_AUTH, $command_string);
+        }
+        
+        if ($cmd_response['status']) {
+            $this->is_connect = true;
+            if ($this->verbose) {
+                echo "✅ Authentication successful!\n";
+            }
+            return true;
+        }
+        
+        throw new Exception("Connection failed");
+    }
+    
+    /**
+     * Disconnect from device - matches pyzk disconnect
+     */
+    public function disconnect() {
+        if ($this->is_connect) {
+            try {
+                $this->sendCommand(self::CMD_EXIT);
+            } catch (Exception $e) {
+                // Ignore disconnect errors
+            }
+            $this->is_connect = false;
+        }
+        
+        if ($this->socket) {
+            @socket_close($this->socket);
+            $this->socket = null;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Enable device - matches pyzk enable_device
+     */
+    public function enableDevice() {
+        $cmd_response = $this->sendCommand(self::CMD_ENABLEDEVICE);
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Disable device - matches pyzk disable_device
+     */
+    public function disableDevice() {
+        $cmd_response = $this->sendCommand(self::CMD_DISABLEDEVICE);
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Read device sizes - matches pyzk read_sizes
      */
     public function readSizes() {
-        $response = $this->sendCommand(self::CMD_GET_FREE_SIZES, '', 1024);
-        if ($response['status']) {
-            if ($this->verbose) {
-                echo "Raw size data length: " . strlen($this->data) . "\n";
-                echo "Raw size data (hex): " . bin2hex($this->data) . "\n";
-            }
+        $cmd_response = $this->sendCommand(self::CMD_GET_FREE_SIZES, '', 1024);
+        
+        if ($cmd_response['status']) {
+            $size = strlen($this->data);
             
-            // Handle empty or insufficient data
-            if (strlen($this->data) < 4) {
-                if ($this->verbose) {
-                    echo "Insufficient size data returned, using defaults\n";
-                }
-                // Set reasonable defaults based on device capabilities
-                $this->users = 0; // Will be determined during actual data read
-                $this->records = 0; // Will be determined during actual data read
-                return [
-                    'users' => $this->users,
-                    'records' => $this->records,
-                    'fingers' => 0,
-                    'templates' => 0,
-                    'passwords' => 0,
-                    'op_records' => 0,
-                ];
-            }
-            
-            $data = unpack('V*', $this->data);
-            
-            if ($this->verbose) {
-                echo "Unpacked data count: " . count($data) . "\n";
-                for ($i = 1; $i <= count($data); $i++) {
-                    echo "  data[$i] = " . (isset($data[$i]) ? $data[$i] : 'unset') . "\n";
-                }
-            }
-            
-            if (count($data) >= 10) {
-                // Based on the debug output, the correct positions are:
-                // data[5] = users count
-                // data[9] = records count
-                $this->users = $data[5];
-                $this->records = $data[9];
+            if ($size >= 80) {
+                $fields = unpack('V20', $this->data);
+                $this->users = $fields[5];
+                $this->fingers = $fields[7];
+                $this->records = $fields[9];
+                $this->cards = $fields[13];
+                $this->fingers_cap = $fields[15];
+                $this->users_cap = $fields[16];
+                $this->rec_cap = $fields[17];
                 
                 if ($this->verbose) {
-                    echo "Final: users = {$this->users}, records = {$this->records}\n";
+                    echo "Device reports {$this->records} records\n";
                 }
-                
-                return [
-                    'users' => $this->users,
-                    'records' => $this->records,
-                    'fingers' => isset($data[2]) ? $data[2] : 0,
-                    'templates' => isset($data[3]) ? $data[3] : 0,
-                    'passwords' => isset($data[4]) ? $data[4] : 0,
-                    'op_records' => isset($data[5]) ? $data[5] : 0,
-                ];
             }
+            
+            if ($size >= 92) {
+                $face_fields = unpack('V3', substr($this->data, 80, 12));
+                $this->faces = $face_fields[1];
+                $this->faces_cap = $face_fields[3];
+            }
+            
+            return true;
         }
-        throw new Exception("Cannot read device sizes");
+        
+        throw new Exception("Can't read sizes");
     }
     
     /**
-     * Check if connected
-     */
-    public function isConnected() {
-        return $this->is_connect;
-    }
-    
-    /**
-     * Get verbose mode status
-     */
-    public function isVerbose() {
-        return $this->verbose;
-    }
-    
-    /**
-     * Set verbose mode
-     */
-    public function setVerbose($verbose) {
-        $this->verbose = $verbose;
-    }
-    
-    /**
-     * Free data buffer on device
+     * Free data buffer - matches pyzk free_data
      */
     public function freeData() {
-        $response = $this->sendCommand(self::CMD_FREE_DATA);
-        return $response['status'];
+        $cmd_response = $this->sendCommand(self::CMD_FREE_DATA);
+        return $cmd_response['status'];
     }
     
     /**
-     * Read data with buffer support
+     * Receive raw data - matches pyzk __recieve_raw_data
      */
-    private function readWithBuffer($command, $fct = 0) {
-        if ($this->verbose) {
-            echo "readWithBuffer: command=$command, fct=$fct\n";
-        }
-        
-        $response = $this->sendCommand($command, pack('V', $fct), 1024);
+    private function receiveRawData($size) {
+        $data = [];
         
         if ($this->verbose) {
-            echo "readWithBuffer response: status=" . ($response['status'] ? 'true' : 'false') . ", code={$response['code']}\n";
+            echo "Expecting $size bytes raw data\n";
         }
         
-        if (!$response['status']) {
-            throw new Exception("Failed to read data with buffer - Response code: {$response['code']}");
-        }
-        
-        if ($response['code'] == self::CMD_DATA) {
-            // Single packet response
-            return [$this->data, strlen($this->data)];
-        }
-        
-        if ($response['code'] == self::CMD_PREPARE_DATA) {
-            // Multi-packet response - get size
-            $size = unpack('V', substr($this->data, 0, 4))[1];
+        while ($size > 0) {
+            $chunk = '';
+            $received = socket_recv($this->socket, $chunk, $size, MSG_WAITALL);
             
-            if ($size == 0) {
-                return ['', 0];
+            if ($received === false || $received === 0) {
+                break;
             }
             
-            // Acknowledge and prepare to receive data
-            $this->ackOk();
+            $data[] = $chunk;
+            $size -= $received;
             
-            // Collect all data packets
-            $bytes_recv = 0;
-            $bytes_data = '';
+            if ($this->verbose) {
+                echo "Partial recv: $received bytes, still need: $size\n";
+            }
+        }
+        
+        return implode('', $data);
+    }
+    
+    /**
+     * Receive TCP data - matches pyzk __recieve_tcp_data
+     */
+    private function receiveTcpData($data_recv, $size) {
+        $data = [];
+        
+        $tcp_length = $this->testTcpTop($data_recv);
+        
+        if ($this->verbose) {
+            echo "tcp_length: $tcp_length, size: $size\n";
+        }
+        
+        if ($tcp_length <= 0) {
+            if ($this->verbose) {
+                echo "Incorrect tcp packet\n";
+            }
+            return [null, ''];
+        }
+        
+        if (($tcp_length - 8) < $size) {
+            if ($this->verbose) {
+                echo "tcp length too small... retrying\n";
+            }
+            list($resp, $bh) = $this->receiveTcpData($data_recv, $tcp_length - 8);
+            $data[] = $resp;
+            $size -= strlen($resp);
             
-            while ($bytes_recv < $size) {
-                $data_chunk = '';
+            if ($this->verbose) {
+                echo "new tcp DATA packet to fill missing $size\n";
+            }
+            
+            $more = '';
+            socket_recv($this->socket, $more, $size + 16, MSG_WAITALL);
+            $data_recv = $bh . $more;
+            
+            list($resp, $bh) = $this->receiveTcpData($data_recv, $size);
+            $data[] = $resp;
+            
+            return [implode('', $data), $bh];
+        }
+        
+        $received = strlen($data_recv);
+        
+        if ($this->verbose) {
+            echo "received: $received, size: $size\n";
+        }
+        
+        $response = unpack('v4', substr($data_recv, 8, 8))[1];
+        
+        if ($received >= ($size + 32)) {
+            if ($response == self::CMD_DATA) {
+                $resp = substr($data_recv, 16, $size);
+                return [$resp, substr($data_recv, $size + 16)];
+            } else {
+                if ($this->verbose) {
+                    echo "incorrect response: $response\n";
+                }
+                return [null, ''];
+            }
+        } else {
+            if ($response == self::CMD_DATA) {
+                $resp = substr($data_recv, 16);
+                $need = $size - strlen($resp);
+                $resp .= $this->receiveRawData($need);
                 
-                if ($this->tcp) {
-                    // For TCP, read in larger chunks and handle packet boundaries
-                    $remaining = $size - $bytes_recv;
-                    $read_size = min(8192, $remaining + 16); // Read more data at once
-                    
-                    $raw_data = socket_read($this->socket, $read_size);
-                    
-                    if ($raw_data !== false) {
-                        // Check if this is a TCP packet with header
-                        $tcp_length = $this->testTcpTop($raw_data);
-                        if ($tcp_length > 0) {
-                            $data_chunk = substr($raw_data, 16); // Skip TCP top + command headers  
-                        } else {
-                            // This might be continuation data without TCP header
-                            $header = unpack('v4', substr($raw_data, 0, 8));
-                            if (isset($header[1]) && $header[1] == self::CMD_DATA) {
-                                $data_chunk = substr($raw_data, 8); // Skip command header only
-                            } else {
-                                $data_chunk = $raw_data; // Raw data continuation
-                            }
-                        }
+                $broken_header = '';
+                socket_recv($this->socket, $broken_header, 16, MSG_WAITALL);
+                
+                return [$resp, $broken_header];
+            } else {
+                if ($this->verbose) {
+                    echo "incorrect response: $response\n";
+                }
+                return [null, ''];
+            }
+        }
+    }
+    
+    /**
+     * Receive chunk - matches pyzk __recieve_chunk
+     */
+    private function receiveChunk() {
+        if ($this->response == self::CMD_DATA) {
+            if ($this->tcp) {
+                if ($this->verbose) {
+                    echo "_rc_DATA! is " . strlen($this->data) . " bytes, tcp length is {$this->tcp_length}\n";
+                }
+                
+                if (strlen($this->data) < ($this->tcp_length - 8)) {
+                    $need = ($this->tcp_length - 8) - strlen($this->data);
+                    if ($this->verbose) {
+                        echo "need more data: $need\n";
                     }
+                    $more_data = $this->receiveRawData($need);
+                    return $this->data . $more_data;
                 } else {
-                    $chunk_size = min(1024, $size - $bytes_recv);
-                    $raw_data = socket_read($this->socket, $chunk_size + 8);
-                    
-                    if ($raw_data !== false) {
-                        $data_chunk = substr($raw_data, 8); // Skip command header
+                    return $this->data;
+                }
+            } else {
+                return $this->data;
+            }
+        } elseif ($this->response == self::CMD_PREPARE_DATA) {
+            $data = [];
+            $size = $this->getDataSize();
+            
+            if ($this->verbose) {
+                echo "receive chunk: prepare data size is $size\n";
+            }
+            
+            if ($this->tcp) {
+                if (strlen($this->data) >= (8 + $size)) {
+                    $data_recv = substr($this->data, 8);
+                } else {
+                    $more = '';
+                    socket_recv($this->socket, $more, $size + 32, MSG_WAITALL);
+                    $data_recv = substr($this->data, 8) . $more;
+                }
+                
+                list($resp, $broken_header) = $this->receiveTcpData($data_recv, $size);
+                $data[] = $resp;
+                
+                // Get CMD_ACK_OK
+                if (strlen($broken_header) < 16) {
+                    $more = '';
+                    socket_recv($this->socket, $more, 16, MSG_WAITALL);
+                    $data_recv = $broken_header . $more;
+                } else {
+                    $data_recv = $broken_header;
+                }
+                
+                if (!$this->testTcpTop($data_recv)) {
+                    if ($this->verbose) {
+                        echo "invalid chunk tcp ACK OK\n";
                     }
+                    return null;
                 }
                 
-                if (empty($data_chunk)) {
-                    break;
+                $response = unpack('v4', substr($data_recv, 8, 8))[1];
+                if ($response == self::CMD_ACK_OK) {
+                    if ($this->verbose) {
+                        echo "chunk tcp ACK OK!\n";
+                    }
+                    return implode('', $data);
                 }
-                
-                $bytes_data .= $data_chunk;
-                $bytes_recv += strlen($data_chunk);
                 
                 if ($this->verbose) {
-                    echo "Received " . strlen($data_chunk) . " bytes, total: $bytes_recv/$size\n";
+                    echo "bad response: $response\n";
                 }
+                return null;
+            } else {
+                // UDP mode
+                while ($size > 0) {
+                    $chunk = '';
+                    socket_recv($this->socket, $chunk, 1024 + 8, 0);
+                    $response = unpack('v4', $chunk)[1];
+                    
+                    if ($response == self::CMD_DATA) {
+                        $data[] = substr($chunk, 8);
+                        $size -= 1024;
+                    } elseif ($response == self::CMD_ACK_OK) {
+                        break;
+                    } else {
+                        break;
+                    }
+                }
+                return implode('', $data);
+            }
+        } else {
+            if ($this->verbose) {
+                echo "invalid response: {$this->response}\n";
+            }
+            return null;
+        }
+    }
+    
+    /**
+     * Read chunk from buffer - matches pyzk __read_chunk
+     */
+    private function readChunk($start, $size) {
+        for ($retries = 0; $retries < 3; $retries++) {
+            $command_string = pack('VV', $start, $size);
+            
+            if ($this->tcp) {
+                $response_size = $size + 32;
+            } else {
+                $response_size = 1024 + 8;
             }
             
-            return [$bytes_data, $bytes_recv];
+            $cmd_response = $this->sendCommand(self::CMD_READ_BUFFER, $command_string, $response_size);
+            $data = $this->receiveChunk();
+            
+            if ($data !== null) {
+                return $data;
+            }
         }
         
-        return ['', 0];
+        throw new Exception("Can't read chunk at $start:$size");
     }
     
     /**
-     * Send ACK OK response
+     * Read with buffer - matches pyzk read_with_buffer
+     * This is the key method for reading large datasets
      */
-    private function ackOk() {
-        $buf = $this->createHeader(self::CMD_ACK_OK, '', $this->session_id, self::USHRT_MAX - 1);
+    public function readWithBuffer($command, $fct = 0, $ext = 0) {
+        if ($this->tcp) {
+            $MAX_CHUNK = 0xFFC0;  // ~65KB for TCP
+        } else {
+            $MAX_CHUNK = 16 * 1024;  // 16KB for UDP
+        }
         
-        try {
+        $command_string = pack('cvVV', 1, $command, $fct, $ext);
+        
+        if ($this->verbose) {
+            echo "rwb command_string: " . bin2hex($command_string) . "\n";
+        }
+        
+        $response_size = 1024;
+        $data = [];
+        $start = 0;
+        
+        $cmd_response = $this->sendCommand(self::CMD_PREPARE_BUFFER, $command_string, $response_size);
+        
+        if (!$cmd_response['status']) {
+            throw new Exception("RWB Not supported");
+        }
+        
+        if ($cmd_response['code'] == self::CMD_DATA) {
             if ($this->tcp) {
-                socket_write($this->socket, $buf, strlen($buf));
+                if ($this->verbose) {
+                    echo "DATA! is " . strlen($this->data) . " bytes, tcp length is {$this->tcp_length}\n";
+                }
+                
+                if (strlen($this->data) < ($this->tcp_length - 8)) {
+                    $need = ($this->tcp_length - 8) - strlen($this->data);
+                    if ($this->verbose) {
+                        echo "need more data: $need\n";
+                    }
+                    $more_data = $this->receiveRawData($need);
+                    return [$this->data . $more_data, strlen($this->data) + strlen($more_data)];
+                } else {
+                    if ($this->verbose) {
+                        echo "Enough data\n";
+                    }
+                    return [$this->data, strlen($this->data)];
+                }
             } else {
-                socket_sendto($this->socket, $buf, strlen($buf), 0, $this->ip, $this->port);
-            }
-        } catch (Exception $e) {
-            if ($this->verbose) {
-                echo "ACK error: " . $e->getMessage() . "\n";
+                return [$this->data, strlen($this->data)];
             }
         }
+        
+        // CMD_ACK_OK with buffer info
+        $size = unpack('V', substr($this->data, 1, 4))[1];
+        
+        if ($this->verbose) {
+            echo "size will be $size\n";
+        }
+        
+        $remain = $size % $MAX_CHUNK;
+        $packets = intval(($size - $remain) / $MAX_CHUNK);
+        
+        if ($this->verbose) {
+            echo "rwb: #$packets packets of max $MAX_CHUNK bytes, and extra $remain bytes remain\n";
+        }
+        
+        for ($i = 0; $i < $packets; $i++) {
+            $data[] = $this->readChunk($start, $MAX_CHUNK);
+            $start += $MAX_CHUNK;
+        }
+        
+        if ($remain) {
+            $data[] = $this->readChunk($start, $remain);
+            $start += $remain;
+        }
+        
+        $this->freeData();
+        
+        if ($this->verbose) {
+            echo "_read w/chunk $start bytes\n";
+        }
+        
+        return [implode('', $data), $start];
     }
     
     /**
-     * Get users from device
+     * Get attendance records - matches pyzk get_attendance exactly
+     */
+    public function getAttendance() {
+        $this->readSizes();
+        
+        if ($this->records == 0) {
+            return [];
+        }
+        
+        if ($this->verbose) {
+            echo "Reading {$this->records} attendance records...\n";
+        }
+        
+        $attendances = [];
+        
+        list($attendance_data, $size) = $this->readWithBuffer(self::CMD_ATTLOG_RRQ);
+        
+        if ($size < 4) {
+            if ($this->verbose) {
+                echo "WRN: no attendance data\n";
+            }
+            return [];
+        }
+        
+        $total_size = unpack('V', substr($attendance_data, 0, 4))[1];
+        $record_size = intval($total_size / $this->records);
+        
+        if ($this->verbose) {
+            echo "record_size is $record_size\n";
+        }
+        
+        $attendance_data = substr($attendance_data, 4);
+        
+        // Parse based on record size - exactly matching pyzk
+        if ($record_size == 8) {
+            // 8-byte record format
+            while (strlen($attendance_data) >= 8) {
+                $record = substr($attendance_data, 0, 8);
+                $unpacked = unpack('vuid/Cstatus/a4timestamp/Cpunch', $record);
+                
+                $uid = $unpacked['uid'];
+                $user_id = (string)$uid;
+                $timestamp = $this->decodeTime($unpacked['timestamp']);
+                
+                $attendances[] = [
+                    'uid' => $uid,
+                    'user_id' => $user_id,
+                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
+                    'date' => $timestamp->format('Y-m-d'),
+                    'time' => $timestamp->format('H:i:s'),
+                    'status' => $unpacked['status'],
+                    'punch' => $unpacked['punch']
+                ];
+                
+                $attendance_data = substr($attendance_data, 8);
+            }
+        } elseif ($record_size == 16) {
+            // 16-byte record format
+            while (strlen($attendance_data) >= 16) {
+                $record = substr($attendance_data, 0, 16);
+                $unpacked = unpack('Vuser_id/a4timestamp/Cstatus/Cpunch/a2reserved/Vworkcode', $record);
+                
+                $user_id = (string)$unpacked['user_id'];
+                $timestamp = $this->decodeTime($unpacked['timestamp']);
+                
+                $attendances[] = [
+                    'uid' => $unpacked['user_id'],
+                    'user_id' => $user_id,
+                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
+                    'date' => $timestamp->format('Y-m-d'),
+                    'time' => $timestamp->format('H:i:s'),
+                    'status' => $unpacked['status'],
+                    'punch' => $unpacked['punch'],
+                    'workcode' => $unpacked['workcode']
+                ];
+                
+                $attendance_data = substr($attendance_data, 16);
+            }
+        } else {
+            // 40-byte record format (most common for newer devices)
+            while (strlen($attendance_data) >= 40) {
+                $record = str_pad(substr($attendance_data, 0, 40), 40, "\x00");
+                $unpacked = unpack('vuid/a24user_id/Cstatus/a4timestamp/Cpunch/a8reserved', $record);
+                
+                $uid = $unpacked['uid'];
+                $user_id = rtrim($unpacked['user_id'], "\x00");
+                
+                if (empty($user_id)) {
+                    $user_id = (string)$uid;
+                }
+                
+                $timestamp = $this->decodeTime($unpacked['timestamp']);
+                
+                $attendances[] = [
+                    'uid' => $uid,
+                    'user_id' => $user_id,
+                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
+                    'date' => $timestamp->format('Y-m-d'),
+                    'time' => $timestamp->format('H:i:s'),
+                    'status' => $unpacked['status'],
+                    'punch' => $unpacked['punch']
+                ];
+                
+                $attendance_data = substr($attendance_data, $record_size);
+            }
+        }
+        
+        if ($this->verbose) {
+            echo "✅ Parsed " . count($attendances) . " attendance records\n";
+            if (count($attendances) > 0) {
+                echo "Sample: {$attendances[0]['user_id']} at {$attendances[0]['timestamp']}\n";
+            }
+        }
+        
+        return $attendances;
+    }
+    
+    /**
+     * Get users - matches pyzk get_users
      */
     public function getUsers() {
-        // Read device sizes first (like Python's read_sizes())
         $this->readSizes();
         
         if ($this->users == 0) {
-            if ($this->verbose) {
-                echo "Device reports 0 users\n";
-            }
+            $this->next_uid = 1;
+            $this->next_user_id = '1';
             return [];
-        }
-        
-        if ($this->verbose) {
-            echo "Device reports {$this->users} users\n";
-        }
-        
-        // Try CMD_USERTEMP_RRQ first (Python method), fallback to CMD_DB_RRQ if no data
-        list($userData, $size) = $this->readWithBuffer(self::CMD_USERTEMP_RRQ, 5);
-        
-        if ($size <= 4) {
-            if ($this->verbose) {
-                echo "CMD_USERTEMP_RRQ returned no data, trying CMD_DB_RRQ fallback...\n";
-            }
-            // Fallback to older method
-            list($userData, $size) = $this->readWithBuffer(self::CMD_DB_RRQ, 5);
-        }
-        
-        if ($this->verbose) {
-            echo "User data size: $size bytes\n";
-        }
-        
-        if ($size <= 4) {
-            if ($this->verbose) {
-                echo "Missing user data\n";
-            }
-            return [];
-        }
-        
-        // Get total size from first 4 bytes
-        $totalSize = unpack('V', substr($userData, 0, 4))[1];
-        $userData = substr($userData, 4);
-        
-        // Calculate packet size like Python
-        $userPacketSize = intval($totalSize / $this->users);
-        
-        if ($this->verbose) {
-            echo "Total size: $totalSize, User packet size: $userPacketSize\n";
-        }
-        
-        if (!in_array($userPacketSize, [28, 72])) {
-            if ($this->verbose) {
-                echo "Warning: unexpected packet size $userPacketSize\n";
-            }
         }
         
         $users = [];
-        $maxUid = 0;
+        $max_uid = 0;
         
-        if ($userPacketSize == 28) {
-            // 28-byte format - older devices
-            $offset = 0;
-            while ($offset + 28 <= strlen($userData)) {
-                $record = substr($userData, $offset, 28);
-                
-                // Python format: '<HB5s8sIxBhI' = uid(2), privilege(1), password(5), name(8), card(4), x(1), group_id(1), timezone(2), user_id(4)
-                $unpacked = unpack('vuid/Cprivilege/a5password/a8name/Vcard/x1/Cgroup_id/vtimezone/Vuser_id', $record);
-                
-                $uid = $unpacked['uid'];
-                $privilege = $unpacked['privilege'];
-                $password = rtrim($unpacked['password'], "\x00");
-                $name = rtrim($unpacked['name'], "\x00");
-                $card = $unpacked['card'];
-                $group_id = $unpacked['group_id'];
-                $user_id = $unpacked['user_id'];
-                
-                if ($uid > $maxUid) $maxUid = $uid;
-                
-                if (!$name) {
-                    $name = "NN-$user_id";
-                }
-                
-                $users[] = [
-                    'uid' => $uid,
-                    'user_id' => (string)$user_id,
-                    'name' => $name,
-                    'privilege' => $privilege,
-                    'password' => $password,
-                    'group_id' => (string)$group_id,
-                    'card' => $card
-                ];
-                
-                if ($this->verbose && count($users) <= 5) {
-                    echo "User {$uid}: $name (ID: $user_id, Privilege: $privilege)\n";
-                }
-                
-                $offset += 28;
+        list($userdata, $size) = $this->readWithBuffer(self::CMD_USERTEMP_RRQ, self::FCT_USER);
+        
+        if ($this->verbose) {
+            echo "user size $size (= " . strlen($userdata) . ")\n";
+        }
+        
+        if ($size <= 4) {
+            if ($this->verbose) {
+                echo "WRN: missing user data\n";
             }
-        } else {
-            // 72-byte format - newer devices (this is what we should get)
-            $offset = 0;
-            while ($offset + 72 <= strlen($userData)) {
-                $record = substr($userData, $offset, 72);
-                
-                // Python format: '<HB8s24sIx7sx24s' = uid(2), privilege(1), password(8), name(24), card(4), x(1), group_id(7), x(1), user_id(24)
-                $unpacked = unpack('vuid/Cprivilege/a8password/a24name/Vcard/x1/a7group_id/x1/a24user_id', $record);
+            return [];
+        }
+        
+        $total_size = unpack('V', substr($userdata, 0, 4))[1];
+        $this->user_packet_size = intval($total_size / $this->users);
+        
+        if (!in_array($this->user_packet_size, [28, 72])) {
+            if ($this->verbose) {
+                echo "WRN packet size would be {$this->user_packet_size}\n";
+            }
+        }
+        
+        $userdata = substr($userdata, 4);
+        
+        if ($this->user_packet_size == 28) {
+            while (strlen($userdata) >= 28) {
+                $record = substr($userdata, 0, 28);
+                $unpacked = unpack('vuid/Cprivilege/a8password/a8name/Vcard/Cgroup/vtimezone/a4slot', $record);
                 
                 $uid = $unpacked['uid'];
-                $privilege = $unpacked['privilege'];
-                $password = rtrim($unpacked['password'], "\x00");
+                $user_id = (string)$uid;
                 $name = rtrim($unpacked['name'], "\x00");
-                $card = $unpacked['card'];
-                $group_id = rtrim($unpacked['group_id'], "\x00");
-                $user_id = rtrim($unpacked['user_id'], "\x00");
+                $password = rtrim($unpacked['password'], "\x00");
                 
-                if ($uid > $maxUid) $maxUid = $uid;
-                
-                if (!$name) {
-                    $name = "NN-$user_id";
+                if ($uid > $max_uid) {
+                    $max_uid = $uid;
                 }
                 
                 $users[] = [
                     'uid' => $uid,
                     'user_id' => $user_id,
                     'name' => $name,
-                    'privilege' => $privilege,
+                    'privilege' => $unpacked['privilege'],
                     'password' => $password,
-                    'group_id' => $group_id,
-                    'card' => $card
+                    'group_id' => (string)$unpacked['group'],
+                    'card' => $unpacked['card']
                 ];
                 
-                if ($this->verbose && count($users) <= 5) {
-                    echo "User {$uid}: $name (ID: $user_id, Privilege: $privilege)\n";
+                $userdata = substr($userdata, 28);
+            }
+        } else {
+            // 72-byte record format
+            while (strlen($userdata) >= 72) {
+                $record = substr($userdata, 0, 72);
+                $unpacked = unpack('vuid/Cprivilege/a8password/a24name/Vcard/Cgroup/vtimezone/a9user_id/a15slot', $record);
+                
+                $uid = $unpacked['uid'];
+                $user_id = rtrim($unpacked['user_id'], "\x00");
+                
+                if (empty($user_id)) {
+                    $user_id = (string)$uid;
                 }
                 
-                $offset += 72;
+                $name = rtrim($unpacked['name'], "\x00");
+                $password = rtrim($unpacked['password'], "\x00");
+                
+                if ($uid > $max_uid) {
+                    $max_uid = $uid;
+                }
+                
+                $users[] = [
+                    'uid' => $uid,
+                    'user_id' => $user_id,
+                    'name' => $name,
+                    'privilege' => $unpacked['privilege'],
+                    'password' => $password,
+                    'group_id' => (string)$unpacked['group'],
+                    'card' => $unpacked['card']
+                ];
+                
+                $userdata = substr($userdata, 72);
             }
         }
         
+        $this->next_uid = $max_uid + 1;
+        $this->next_user_id = (string)($max_uid + 1);
+        
         if ($this->verbose) {
-            echo "Parsed " . count($users) . " users\n";
+            echo "✅ Found " . count($users) . " users\n";
         }
         
         return $users;
     }
-
-    public function parseUsersWithSize($recordSize) {
-        // This method is no longer used - replaced by new Python-compatible getUsers()
-        return [];
-    }
-
-    public function getAttendance() {
-        // Read device sizes first (like Python's read_sizes())
-        $this->readSizes();
-        
-        if ($this->records == 0) {
-            if ($this->verbose) {
-                echo "Device reports 0 records\n";
-            }
-            return [];
-        }
-        
-        if ($this->verbose) {
-            echo "Device reports {$this->records} records\n";
-        }
-        
-        // Get users first for user ID mapping (like Python does)
-        $users = $this->getUsers();
-        $userLookup = [];
-        foreach ($users as $user) {
-            $userLookup[$user['uid']] = $user['user_id'];
-        }
-        
-        // Use Python's exact command: CMD_ATTLOG_RRQ
-        list($attendanceData, $size) = $this->readWithBuffer(self::CMD_ATTLOG_RRQ);
-        
-        if ($this->verbose) {
-            echo "Attendance data size: $size bytes\n";
-        }
-        
-        if ($size < 4) {
-            if ($this->verbose) {
-                echo "CMD_ATTLOG_RRQ returned no data, trying CMD_DB_RRQ fallback with buffer 1...\n";
-            }
-            // Try alternative command with buffer ID 1 for attendance logs
-            list($attendanceData, $size) = $this->readWithBuffer(self::CMD_DB_RRQ, 1);
-            
-            if ($this->verbose) {
-                echo "CMD_DB_RRQ attendance data size: $size bytes\n";
-            }
-            
-            if ($size < 4) {
-                if ($this->verbose) {
-                    echo "No attendance data\n";
-                }
-                return [];
-            }
-        }
-        
-        // Get total size from first 4 bytes
-        $totalSize = unpack('V', substr($attendanceData, 0, 4))[1];
-        $attendanceData = substr($attendanceData, 4);
-        
-        // Calculate record size like Python
-        $recordSize = intval($totalSize / $this->records);
-        
-        if ($this->verbose) {
-            echo "Total size: $totalSize, Record size: $recordSize\n";
-        }
-        
-        $attendances = [];
-        
-        if ($recordSize == 8) {
-            // 8-byte format
-            $offset = 0;
-            while ($offset + 8 <= strlen($attendanceData)) {
-                $record = substr($attendanceData, $offset, 8);
-                
-                // Python format: 'HB4sB' = uid(2), status(1), timestamp(4), punch(1)
-                $unpacked = unpack('vuid/Cstatus/Vtimestamp/Cpunch', $record);
-                
-                $uid = $unpacked['uid'];
-                $status = $unpacked['status'];
-                $timestamp = $this->decodeTime($unpacked['timestamp']);
-                $punch = $unpacked['punch'];
-                
-                // User ID lookup like Python does
-                $user_id = isset($userLookup[$uid]) ? $userLookup[$uid] : (string)$uid;
-                
-                $attendances[] = [
-                    'uid' => count($attendances) + 1,
-                    'user_id' => $user_id,
-                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
-                    'status' => $status,
-                    'punch' => $punch,
-                    'date' => $timestamp->format('Y-m-d'),
-                    'time' => $timestamp->format('H:i:s')
-                ];
-                
-                $offset += 8;
-            }
-        } elseif ($recordSize == 16) {
-            // 16-byte format  
-            $offset = 0;
-            while ($offset + 16 <= strlen($attendanceData)) {
-                $record = substr($attendanceData, $offset, 16);
-                
-                // Python format: '<I4sBB2sI' = user_id(4), timestamp(4), status(1), punch(1), reserved(2), workcode(4)
-                $unpacked = unpack('Vuser_id/Vtimestamp/Cstatus/Cpunch/a2reserved/Vworkcode', $record);
-                
-                $user_id = (string)$unpacked['user_id'];
-                $timestamp = $this->decodeTime($unpacked['timestamp']);
-                $status = $unpacked['status'];
-                $punch = $unpacked['punch'];
-                
-                $attendances[] = [
-                    'uid' => count($attendances) + 1,
-                    'user_id' => $user_id,
-                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
-                    'status' => $status,
-                    'punch' => $punch,
-                    'date' => $timestamp->format('Y-m-d'),
-                    'time' => $timestamp->format('H:i:s')
-                ];
-                
-                $offset += 16;
-            }
-        } else {
-            // 40-byte format
-            $offset = 0;
-            while ($offset + 40 <= strlen($attendanceData)) {
-                $record = substr($attendanceData, $offset, 40);
-                
-                // Python format: '<H24sB4sB8s' = uid(2), user_id(24), status(1), timestamp(4), punch(1), space(8)
-                $unpacked = unpack('vuid/a24user_id/Cstatus/Vtimestamp/Cpunch/a8space', $record);
-                
-                $uid = $unpacked['uid'];
-                $user_id = rtrim($unpacked['user_id'], "\x00");
-                $status = $unpacked['status'];
-                $timestamp = $this->decodeTime($unpacked['timestamp']);
-                $punch = $unpacked['punch'];
-                
-                if (empty($user_id)) {
-                    $user_id = (string)$uid;
-                }
-                
-                $attendances[] = [
-                    'uid' => count($attendances) + 1,
-                    'user_id' => $user_id,
-                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
-                    'status' => $status,
-                    'punch' => $punch,
-                    'date' => $timestamp->format('Y-m-d'),
-                    'time' => $timestamp->format('H:i:s')
-                ];
-                
-                $offset += 40;
-            }
-        }
-        
-        if ($this->verbose) {
-            echo "Parsed " . count($attendances) . " attendance records\n";
-        }
-        
-        return $attendances;
-    }
     
     /**
-     * Get attendance records without calling getUsers() - for use in extractAllData()
+     * Get device time - matches pyzk get_time
      */
-    public function getAttendanceOnly($users = []) {
-        // Don't call readSizes again, assume device state is already known
-        if ($this->records == 0) {
-            if ($this->verbose) {
-                echo "Device reports 0 records (using cached values)\n";
-            }
-            return [];
+    public function getTime() {
+        $cmd_response = $this->sendCommand(self::CMD_GET_TIME, '', 1032);
+        
+        if ($cmd_response['status']) {
+            return $this->decodeTime(substr($this->data, 0, 4));
         }
         
-        if ($this->verbose) {
-            echo "Device reports {$this->records} records (cached)\n";
-        }
-        
-        // Build user lookup from provided users (don't call getUsers again)
-        $userLookup = [];
-        foreach ($users as $user) {
-            $userLookup[$user['uid']] = $user['user_id'];
-        }
-        
-        // Use Python's exact command: CMD_ATTLOG_RRQ
-        list($attendanceData, $size) = $this->readWithBuffer(self::CMD_ATTLOG_RRQ);
-        
-        if ($this->verbose) {
-            echo "Attendance data size: $size bytes\n";
-        }
-        
-        if ($size < 4) {
-            if ($this->verbose) {
-                echo "CMD_ATTLOG_RRQ returned no data, trying CMD_DB_RRQ fallback with buffer 1...\n";
-            }
-            // Try alternative command with buffer ID 1 for attendance logs
-            list($attendanceData, $size) = $this->readWithBuffer(self::CMD_DB_RRQ, 1);
-            
-            if ($this->verbose) {
-                echo "CMD_DB_RRQ attendance data size: $size bytes\n";
-            }
-            
-            if ($size < 4) {
-                if ($this->verbose) {
-                    echo "No attendance data\n";
-                }
-                return [];
-            }
-        }
-        
-        // Get total size from first 4 bytes
-        $totalSize = unpack('V', substr($attendanceData, 0, 4))[1];
-        $attendanceData = substr($attendanceData, 4);
-        
-        // Calculate record size like Python
-        $recordSize = intval($totalSize / $this->records);
-        
-        if ($this->verbose) {
-            echo "Total size: $totalSize, Record size: $recordSize\n";
-        }
-        
-        $attendances = [];
-        
-        if ($recordSize == 8) {
-            // 8-byte format
-            $offset = 0;
-            while ($offset + 8 <= strlen($attendanceData)) {
-                $record = substr($attendanceData, $offset, 8);
-                
-                // Python format: 'HB4sB' = uid(2), status(1), timestamp(4), punch(1)
-                $unpacked = unpack('vuid/Cstatus/Vtimestamp/Cpunch', $record);
-                
-                $uid = $unpacked['uid'];
-                $status = $unpacked['status'];
-                $timestamp = $this->decodeTime($unpacked['timestamp']);
-                $punch = $unpacked['punch'];
-                
-                // User ID lookup like Python does
-                $user_id = isset($userLookup[$uid]) ? $userLookup[$uid] : (string)$uid;
-                
-                $attendances[] = [
-                    'uid' => count($attendances) + 1,
-                    'user_id' => $user_id,
-                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
-                    'status' => $status,
-                    'punch' => $punch,
-                    'date' => $timestamp->format('Y-m-d'),
-                    'time' => $timestamp->format('H:i:s')
-                ];
-                
-                $offset += 8;
-            }
-        } elseif ($recordSize == 16) {
-            // 16-byte format  
-            $offset = 0;
-            while ($offset + 16 <= strlen($attendanceData)) {
-                $record = substr($attendanceData, $offset, 16);
-                
-                // Python format: '<I4sBB2sI' = user_id(4), timestamp(4), status(1), punch(1), reserved(2), workcode(4)
-                $unpacked = unpack('Vuser_id/Vtimestamp/Cstatus/Cpunch/a2reserved/Vworkcode', $record);
-                
-                $user_id = (string)$unpacked['user_id'];
-                $timestamp = $this->decodeTime($unpacked['timestamp']);
-                $status = $unpacked['status'];
-                $punch = $unpacked['punch'];
-                
-                $attendances[] = [
-                    'uid' => count($attendances) + 1,
-                    'user_id' => $user_id,
-                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
-                    'status' => $status,
-                    'punch' => $punch,
-                    'date' => $timestamp->format('Y-m-d'),
-                    'time' => $timestamp->format('H:i:s')
-                ];
-                
-                $offset += 16;
-            }
-        } else {
-            // 40-byte format
-            $offset = 0;
-            while ($offset + 40 <= strlen($attendanceData)) {
-                $record = substr($attendanceData, $offset, 40);
-                
-                // Python format: '<H24sB4sB8s' = uid(2), user_id(24), status(1), timestamp(4), punch(1), space(8)
-                $unpacked = unpack('vuid/a24user_id/Cstatus/Vtimestamp/Cpunch/a8space', $record);
-                
-                $uid = $unpacked['uid'];
-                $user_id = rtrim($unpacked['user_id'], "\x00");
-                $status = $unpacked['status'];
-                $timestamp = $this->decodeTime($unpacked['timestamp']);
-                $punch = $unpacked['punch'];
-                
-                if (empty($user_id)) {
-                    $user_id = (string)$uid;
-                }
-                
-                $attendances[] = [
-                    'uid' => count($attendances) + 1,
-                    'user_id' => $user_id,
-                    'timestamp' => $timestamp->format('Y-m-d H:i:s'),
-                    'status' => $status,
-                    'punch' => $punch,
-                    'date' => $timestamp->format('Y-m-d'),
-                    'time' => $timestamp->format('H:i:s')
-                ];
-                
-                $offset += 40;
-            }
-        }
-        
-        if ($this->verbose) {
-            echo "Parsed " . count($attendances) . " attendance records\n";
-        }
-        
-        return $attendances;
+        throw new Exception("Can't get time");
     }
     
     /**
-     * Get comprehensive device information
+     * Set device time - matches pyzk set_time
+     */
+    public function setTime($timestamp = null) {
+        if ($timestamp === null) {
+            $timestamp = new DateTime();
+        }
+        
+        $command_string = pack('V', $this->encodeTime($timestamp));
+        $cmd_response = $this->sendCommand(self::CMD_SET_TIME, $command_string);
+        
+        if ($cmd_response['status']) {
+            return true;
+        }
+        
+        throw new Exception("Can't set time");
+    }
+    
+    /**
+     * Get firmware version - matches pyzk get_firmware_version
+     */
+    public function getFirmwareVersion() {
+        $cmd_response = $this->sendCommand(self::CMD_GET_VERSION, '', 1024);
+        
+        if ($cmd_response['status']) {
+            $version = explode("\x00", $this->data)[0];
+            return $version;
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Get serial number - matches pyzk get_serialnumber
+     */
+    public function getSerialNumber() {
+        $cmd_response = $this->sendCommand(self::CMD_OPTIONS_RRQ, "~SerialNumber\x00", 1024);
+        
+        if ($cmd_response['status']) {
+            $parts = explode('=', $this->data, 2);
+            if (count($parts) > 1) {
+                return rtrim($parts[1], "\x00");
+            }
+            return rtrim($this->data, "\x00");
+        }
+        
+        throw new Exception("Can't read serial number");
+    }
+    
+    /**
+     * Get device name - matches pyzk get_device_name
+     */
+    public function getDeviceName() {
+        $cmd_response = $this->sendCommand(self::CMD_OPTIONS_RRQ, "~DeviceName\x00", 1024);
+        
+        if ($cmd_response['status']) {
+            $parts = explode('=', $this->data, 2);
+            if (count($parts) > 1) {
+                return rtrim($parts[1], "\x00");
+            }
+            return rtrim($this->data, "\x00");
+        }
+        
+        return "";
+    }
+    
+    /**
+     * Get platform - matches pyzk get_platform
+     */
+    public function getPlatform() {
+        $cmd_response = $this->sendCommand(self::CMD_OPTIONS_RRQ, "~Platform\x00", 1024);
+        
+        if ($cmd_response['status']) {
+            $parts = explode('=', $this->data, 2);
+            if (count($parts) > 1) {
+                return rtrim($parts[1], "\x00=");
+            }
+            return rtrim($this->data, "\x00=");
+        }
+        
+        throw new Exception("Can't read platform");
+    }
+    
+    /**
+     * Get MAC address - matches pyzk get_mac
+     */
+    public function getMac() {
+        $cmd_response = $this->sendCommand(self::CMD_OPTIONS_RRQ, "MAC\x00", 1024);
+        
+        if ($cmd_response['status']) {
+            $parts = explode('=', $this->data, 2);
+            if (count($parts) > 1) {
+                return rtrim($parts[1], "\x00");
+            }
+            return rtrim($this->data, "\x00");
+        }
+        
+        throw new Exception("Can't read MAC address");
+    }
+    
+    /**
+     * Clear all data - matches pyzk clear_data
+     */
+    public function clearData() {
+        $cmd_response = $this->sendCommand(self::CMD_CLEAR_DATA);
+        
+        if ($cmd_response['status']) {
+            $this->next_uid = 1;
+            return true;
+        }
+        
+        throw new Exception("Can't clear data");
+    }
+    
+    /**
+     * Clear attendance records - matches pyzk clear_attendance
+     */
+    public function clearAttendance() {
+        $cmd_response = $this->sendCommand(self::CMD_CLEAR_ATTLOG);
+        
+        if ($cmd_response['status']) {
+            return true;
+        }
+        
+        throw new Exception("Can't clear attendance");
+    }
+    
+    /**
+     * Restart device - matches pyzk restart
+     */
+    public function restart() {
+        $cmd_response = $this->sendCommand(self::CMD_RESTART);
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Power off device - matches pyzk poweroff
+     */
+    public function poweroff() {
+        $cmd_response = $this->sendCommand(self::CMD_POWEROFF);
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Unlock door - matches pyzk unlock
+     */
+    public function unlock($time = 3) {
+        $command_string = pack('V', $time * 10);
+        $cmd_response = $this->sendCommand(31, $command_string);  // CMD_UNLOCK = 31
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Test voice - matches pyzk test_voice
+     */
+    public function testVoice($index = 0) {
+        $command_string = pack('V', $index);
+        $cmd_response = $this->sendCommand(1017, $command_string);  // CMD_TESTVOICE = 1017
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Refresh data - matches pyzk refresh_data
+     */
+    public function refreshData() {
+        $cmd_response = $this->sendCommand(1013);  // CMD_REFRESHDATA = 1013
+        return $cmd_response['status'];
+    }
+    
+    /**
+     * Export attendance data to CSV
+     */
+    public function exportAttendanceToCsv($filename) {
+        $attendance = $this->getAttendance();
+        
+        $fp = fopen($filename, 'w');
+        fputcsv($fp, ['UserID', 'Timestamp', 'Status', 'UID']);
+        
+        foreach ($attendance as $record) {
+            fputcsv($fp, [
+                $record['user_id'],
+                $record['timestamp'],
+                $record['status'],
+                $record['uid']
+            ]);
+        }
+        
+        fclose($fp);
+        
+        return count($attendance);
+    }
+    
+    /**
+     * Export users to CSV
+     */
+    public function exportUsersToCsv($filename) {
+        $users = $this->getUsers();
+        
+        $fp = fopen($filename, 'w');
+        fputcsv($fp, ['UID', 'UserID', 'Name', 'Privilege', 'Card']);
+        
+        foreach ($users as $user) {
+            fputcsv($fp, [
+                $user['uid'],
+                $user['user_id'],
+                $user['name'],
+                $user['privilege'],
+                $user['card']
+            ]);
+        }
+        
+        fclose($fp);
+        
+        return count($users);
+    }
+    
+    /**
+     * Get all device info
      */
     public function getDeviceInfo() {
-        $info = [];
-        
-        try {
-            $info['firmware_version'] = $this->getFirmwareVersion();
-        } catch (Exception $e) {
-            $info['firmware_version'] = 'Unknown';
-        }
-        
-        try {
-            $info['serial_number'] = $this->getSerialNumber();
-        } catch (Exception $e) {
-            $info['serial_number'] = 'Unknown';
-        }
-        
-        try {
-            $info['platform'] = $this->getPlatform();
-        } catch (Exception $e) {
-            $info['platform'] = 'Unknown';
-        }
-        
-        try {
-            $info['device_name'] = $this->getDeviceName();
-        } catch (Exception $e) {
-            $info['device_name'] = 'Unknown';
-        }
-        
-        try {
-            $info['time'] = $this->getTime()->format('Y-m-d H:i:s');
-        } catch (Exception $e) {
-            $info['time'] = 'Unknown';
-        }
-        
-        try {
-            $info['mac'] = $this->getMac();
-        } catch (Exception $e) {
-            $info['mac'] = 'Unknown';
-        }
-        
-        try {
-            $sizes = $this->readSizes();
-            $info = array_merge($info, $sizes);
-        } catch (Exception $e) {
-            // Sizes not available
-        }
-        
-        return $info;
+        return [
+            'firmware_version' => $this->getFirmwareVersion(),
+            'serial_number' => $this->getSerialNumber(),
+            'device_name' => $this->getDeviceName(),
+            'platform' => $this->getPlatform(),
+            'mac' => $this->getMac(),
+            'users' => $this->users,
+            'fingers' => $this->fingers,
+            'records' => $this->records,
+            'cards' => $this->cards,
+            'faces' => $this->faces
+        ];
     }
     
     /**
-     * Extract all data from the device
+     * Check connection status
      */
-    public function extractAllData() {
-        echo "🚀 Starting ZKTeco PHP data extraction...\n";
-        echo str_repeat('=', 60) . "\n";
-        
-        // Connect to device
-        if (!$this->connect()) {
-            echo "❌ Failed to connect to device\n";
-            return false;
-        }
-        
-        try {
-            // Get device information
-            echo "\n📱 DEVICE INFORMATION:\n";
-            echo str_repeat('-', 30) . "\n";
-            
-            $device_info = $this->getDeviceInfo();
-            
-            foreach ($device_info as $key => $value) {
-                echo "   " . ucwords(str_replace('_', ' ', $key)) . ": $value\n";
-            }
-            
-            // Extract users first
-            echo "\n� USERS EXTRACTION:\n";
-            echo str_repeat('-', 30) . "\n";
-            
-            $users = [];
-            try {
-                $users = $this->getUsers();
-                
-                if (!empty($users)) {
-                    echo "   Total Users: " . count($users) . "\n";
-                    echo "   Sample users:\n";
-                    
-                    for ($i = 0; $i < min(3, count($users)); $i++) {
-                        $user = $users[$i];
-                        echo "     " . ($i + 1) . ". ID: {$user['user_id']}, Name: {$user['name']}\n";
-                    }
-                    
-                    // Save users to files
-                    $this->saveToCSV($users, 'zk_users_php');
-                    $this->saveToJSON($users, 'zk_users_php');
-                } else {
-                    echo "   ⚠️  No users found\n";
-                }
-            } catch (Exception $e) {
-                echo "   ⚠️  Users extraction failed: " . $e->getMessage() . "\n";
-            }
-            
-            // Extract attendance separately (without calling getUsers again)
-            echo "\n📊 ATTENDANCE EXTRACTION:\n";
-            echo str_repeat('-', 30) . "\n";
-            
-            $attendance = [];
-            try {
-                $attendance = $this->getAttendanceOnly($users);
-                
-                if (!empty($attendance)) {
-                    echo "   Total Records: " . count($attendance) . "\n";
-                    
-                    // Show date range
-                    $dates = array_column($attendance, 'date');
-                    if (!empty($dates)) {
-                        echo "   Date Range: " . min($dates) . " to " . max($dates) . "\n";
-                    }
-                    
-                    // Show sample records
-                    echo "   Sample records:\n";
-                    for ($i = 0; $i < min(3, count($attendance)); $i++) {
-                        $att = $attendance[$i];
-                        echo "     " . ($i + 1) . ". User: {$att['user_id']}, Time: {$att['timestamp']}, Status: {$att['status']}\n";
-                    }
-                    
-                    // Save attendance to files
-                    $this->saveToCSV($attendance, 'zk_attendance_php');
-                    $this->saveToJSON($attendance, 'zk_attendance_php');
-                    
-                    // Generate summary report
-                    $this->generateSummaryReport($attendance, $users, $device_info);
-                } else {
-                    echo "   ⚠️  No attendance records found\n";
-                }
-            } catch (Exception $e) {
-                echo "   ⚠️  Attendance extraction failed: " . $e->getMessage() . "\n";
-            }
-            
-            echo "\n🎉 EXTRACTION COMPLETED SUCCESSFULLY!\n";
-            echo str_repeat('=', 60) . "\n";
-            
-            // Return true if we got device info (proves connection works)
-            return true;
-            
-        } catch (Exception $e) {
-            echo "❌ Extraction failed: " . $e->getMessage() . "\n";
-            return false;
-        } finally {
-            $this->disconnect();
-        }
-    }
-    
-    /**
-     * Save data to CSV file
-     */
-    private function saveToCSV($data, $filename_prefix) {
-        if (empty($data)) {
-            echo "❌ No data to save\n";
-            return false;
-        }
-        
-        // Create export directory if it doesn't exist
-        $export_dir = 'export';
-        if (!is_dir($export_dir)) {
-            mkdir($export_dir, 0755, true);
-        }
-        
-        $timestamp = date('Ymd_His');
-        $ip_safe = str_replace('.', '_', $this->ip);
-        $filename = "{$export_dir}/{$filename_prefix}_{$ip_safe}_{$timestamp}.csv";
-        
-        try {
-            $fp = fopen($filename, 'w');
-            
-            // Write headers
-            fputcsv($fp, array_keys($data[0]));
-            
-            // Write data with additional cleaning
-            foreach ($data as $record) {
-                $clean_record = [];
-                foreach ($record as $key => $value) {
-                    // Clean each field for CSV export
-                    if (is_string($value)) {
-                        // Remove any remaining non-printable characters
-                        $clean_value = preg_replace('/[^\x20-\x7E]/', '', $value);
-                        // Remove problematic quotes that aren't properly escaped
-                        $clean_value = str_replace(['"', "'"], '', $clean_value);
-                        $clean_record[$key] = $clean_value;
-                    } else {
-                        $clean_record[$key] = $value;
-                    }
-                }
-                fputcsv($fp, $clean_record);
-            }
-            
-            fclose($fp);
-            
-            echo "✅ Saved " . count($data) . " records to: $filename\n";
-            return $filename;
-            
-        } catch (Exception $e) {
-            echo "❌ Failed to save CSV: " . $e->getMessage() . "\n";
-            return false;
-        }
-    }
-    
-    /**
-     * Save data to JSON file
-     */
-    private function saveToJSON($data, $filename_prefix) {
-        if (empty($data)) {
-            echo "❌ No data to save\n";
-            return false;
-        }
-        
-        // Create export directory if it doesn't exist
-        $export_dir = 'export';
-        if (!is_dir($export_dir)) {
-            mkdir($export_dir, 0755, true);
-        }
-        
-        $timestamp = date('Ymd_His');
-        $ip_safe = str_replace('.', '_', $this->ip);
-        $filename = "{$export_dir}/{$filename_prefix}_{$ip_safe}_{$timestamp}.json";
-        
-        try {
-            // Clean data for JSON encoding
-            $clean_data = [];
-            foreach ($data as $record) {
-                $clean_record = [];
-                foreach ($record as $key => $value) {
-                    // Ensure all string values are UTF-8 clean
-                    if (is_string($value)) {
-                        $clean_record[$key] = mb_convert_encoding($value, 'UTF-8', 'UTF-8');
-                    } else {
-                        $clean_record[$key] = $value;
-                    }
-                }
-                $clean_data[] = $clean_record;
-            }
-            
-            $json = json_encode($clean_data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
-            
-            if ($json === false) {
-                echo "❌ JSON encoding failed: " . json_last_error_msg() . "\n";
-                return false;
-            }
-            
-            file_put_contents($filename, $json);
-            
-            echo "✅ Saved " . count($data) . " records to: $filename\n";
-            return $filename;
-            
-        } catch (Exception $e) {
-            echo "❌ Failed to save JSON: " . $e->getMessage() . "\n";
-            return false;
-        }
-    }
-    
-    /**
-     * Generate summary report
-     */
-    private function generateSummaryReport($attendance, $users, $device_info) {
-        // Create export directory if it doesn't exist
-        $export_dir = 'export';
-        if (!is_dir($export_dir)) {
-            mkdir($export_dir, 0755, true);
-        }
-        
-        $timestamp = date('Ymd_His');
-        $ip_safe = str_replace('.', '_', $this->ip);
-        $filename = "{$export_dir}/zk_summary_report_php_{$ip_safe}_{$timestamp}.txt";
-        
-        try {
-            $report = "ZK ATTENDANCE SYSTEM SUMMARY REPORT (PHP)\n";
-            $report .= str_repeat('=', 50) . "\n";
-            $report .= "Generated: " . date('Y-m-d H:i:s') . "\n";
-            $report .= "Device IP: {$this->ip}:{$this->port}\n\n";
-            
-            // Device Information
-            $report .= "DEVICE INFORMATION:\n";
-            $report .= str_repeat('-', 20) . "\n";
-            foreach ($device_info as $key => $value) {
-                $report .= ucwords(str_replace('_', ' ', $key)) . ": $value\n";
-            }
-            $report .= "\n";
-            
-            // Users Summary
-            $report .= "USERS SUMMARY:\n";
-            $report .= str_repeat('-', 15) . "\n";
-            $report .= "Total Users: " . count($users) . "\n";
-            
-            if (!empty($users)) {
-                // Group by privilege
-                $privileges = [];
-                foreach ($users as $user) {
-                    $priv = $user['privilege'] ?? 'Unknown';
-                    $privileges[$priv] = ($privileges[$priv] ?? 0) + 1;
-                }
-                
-                $report .= "Users by Privilege:\n";
-                foreach ($privileges as $priv => $count) {
-                    $report .= "  $priv: $count\n";
-                }
-            }
-            $report .= "\n";
-            
-            // Attendance Summary
-            $report .= "ATTENDANCE SUMMARY:\n";
-            $report .= str_repeat('-', 20) . "\n";
-            $report .= "Total Records: " . count($attendance) . "\n";
-            
-            if (!empty($attendance)) {
-                // Date range
-                $dates = array_column($attendance, 'date');
-                if (!empty($dates)) {
-                    $report .= "Date Range: " . min($dates) . " to " . max($dates) . "\n";
-                }
-                
-                // Daily counts (last 7 days)
-                $daily_counts = [];
-                foreach ($attendance as $att) {
-                    $date = $att['date'] ?? 'Unknown';
-                    $daily_counts[$date] = ($daily_counts[$date] ?? 0) + 1;
-                }
-                
-                $report .= "Records by Date (last 7 days):\n";
-                $sorted_dates = array_keys($daily_counts);
-                rsort($sorted_dates);
-                $recent_dates = array_slice($sorted_dates, 0, 7);
-                
-                foreach ($recent_dates as $date) {
-                    $report .= "  $date: {$daily_counts[$date]} records\n";
-                }
-                
-                // Status summary
-                $status_counts = [];
-                foreach ($attendance as $att) {
-                    $status = $att['status'] ?? 'Unknown';
-                    $status_counts[$status] = ($status_counts[$status] ?? 0) + 1;
-                }
-                
-                $report .= "Records by Status:\n";
-                foreach ($status_counts as $status => $count) {
-                    $report .= "  Status $status: $count records\n";
-                }
-            }
-            
-            file_put_contents($filename, $report);
-            echo "✅ Summary report saved to: $filename\n";
-            
-        } catch (Exception $e) {
-            echo "❌ Failed to generate summary report: " . $e->getMessage() . "\n";
-        }
-    }
-    
-    /**
-     * Clean and extract readable text from binary name data
-     */
-    private function cleanNameData($raw_data) {
-        if (empty($raw_data)) return '';
-        
-        // Remove null terminators and clean
-        $cleaned = rtrim($raw_data, "\x00");
-        if (empty($cleaned)) return '';
-        
-        $result = '';
-        $len = strlen($cleaned);
-        
-        // Extract only printable characters
-        for ($i = 0; $i < $len; $i++) {
-            $char = $cleaned[$i];
-            $ord = ord($char);
-            
-            // Accept printable ASCII characters (32-126)
-            if ($ord >= 32 && $ord <= 126) {
-                // Keep alphanumeric, space, hyphen, underscore, period, apostrophe
-                if (($ord >= 48 && $ord <= 57) ||  // 0-9
-                    ($ord >= 65 && $ord <= 90) ||   // A-Z  
-                    ($ord >= 97 && $ord <= 122) ||  // a-z
-                    $ord == 32 || $ord == 45 || $ord == 95 || // space, hyphen, underscore
-                    $ord == 46 || $ord == 39) {              // period, apostrophe
-                    $result .= $char;
-                } else if ($ord >= 33 && $ord <= 47) {
-                    // Convert some punctuation to space
-                    $result .= ' ';
-                }
-            }
-        }
-        
-        // Clean up the result
-        $result = trim($result);
-        $result = preg_replace('/\s+/', ' ', $result); // Normalize spaces
-        $result = preg_replace('/[^a-zA-Z0-9\s_.-]/', '', $result); // Final cleanup
-        
-        return $result;
-    }
-
-    /**
-     * Extract name candidates from a user record
-     * Used for testing record size quality during dynamic detection
-     */
-    private function extractNameCandidates($record) {
-        $name_candidates = [];
-        $record_size = strlen($record);
-        
-        // Scan the entire record for readable text segments
-        for ($start = 8; $start < $record_size - 8; $start += 4) {
-            $segment_size = min(32, $record_size - $start);
-            $name_segment = substr($record, $start, $segment_size);
-            $cleaned = $this->cleanNameData($name_segment);
-            
-            if (!empty($cleaned) && strlen($cleaned) >= 3 && preg_match('/[a-zA-Z]/', $cleaned)) {
-                $name_candidates[] = $cleaned;
-            }
-        }
-        
-        return $name_candidates;
-    }
-    
-    private function isRealName($name) {
-        $name = trim($name);
-        
-        // Reject obvious generic patterns
-        if (preg_match('/^User_\d+$/i', $name)) return false;
-        if (preg_match('/^\d+$/', $name)) return false; // Pure numbers
-        if (strlen($name) < 3) return false;
-        
-        // Accept names that look human-like
-        // Contains letters, may have spaces/dots/hyphens, not just "User_XXX" pattern
-        if (preg_match('/^[a-zA-Z][a-zA-Z0-9\s._-]*[a-zA-Z]$/', $name)) {
-            // Extra check: prefer names with spaces or mixed case (more human-like)
-            if (preg_match('/[\s]/', $name) || preg_match('/[a-z].*[A-Z]|[A-Z].*[a-z]/', $name)) {
-                return true; // Names with spaces or mixed case are very likely real
-            }
-            // Also accept single names that aren't generic patterns
-            if (!preg_match('/^(user|admin|test|guest|default)\d*$/i', $name)) {
-                return true;
-            }
-        }
-        
-        return false;
+    public function isConnected() {
+        return $this->is_connect;
     }
 }
-?>
